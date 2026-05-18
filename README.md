@@ -2,6 +2,8 @@
 
 ![Sashiko Logo](static/logo.png)
 
+[![Linux Foundation](https://img.shields.io/badge/Linux%20Foundation-Project-blue.svg)](https://www.linuxfoundation.org/)
+
 > **Sashiko** (刺し子, literally "little stabs") is a form of decorative reinforcement stitching from Japan. Originally used to reinforce points of wear or to repair worn places or tears with patches, here it represents our mission to reinforce the Linux kernel through automated, intelligent patch review.
 
 Sashiko is an agentic Linux kernel code review system. It uses a set Linux kernel-specific prompts and a special protocol to review proposed Linux kernel changes. Sashiko can ingest patches from mailing lists or local git. It's fully self contained (doesn't use any external agentic cli tools) and can work with various LLM providers.
@@ -409,8 +411,6 @@ gemini skills install ./skills/sashiko-feature.skill --scope workspace
 For users of other agent interfaces (e.g., OpenCode, Claude Code), we recommend following your interface's specific settings to symlink or copy the skill configurations (the `SKILL.md` and `references/` files) into your agent's custom instruction path.
 
 ## License
-
-[![Linux Foundation](https://img.shields.io/badge/Linux%20Foundation-Project-blue.svg)](https://www.linuxfoundation.org/)
 
 Copyright The Linux Foundation and its contributors. All rights reserved.
 
