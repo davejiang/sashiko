@@ -571,10 +571,34 @@ impl ToolBox {
             return Err(anyhow!("Invalid path: {}", relative));
         }
         let full_path = base.join(relative);
-        if !full_path.starts_with(base) {
-            return Err(anyhow!("Path traversal detected: {:?}", full_path));
+
+        let canonical_base = base
+            .canonicalize()
+            .map_err(|e| anyhow!("Failed to canonicalize base path: {}", e))?;
+
+        let canonical_full = match full_path.canonicalize() {
+            Ok(p) => p,
+            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if let Some(parent) = full_path.parent() {
+                    let canonical_parent = parent
+                        .canonicalize()
+                        .map_err(|e| anyhow!("Failed to canonicalize parent path: {}", e))?;
+                    if !canonical_parent.starts_with(&canonical_base) {
+                        return Err(anyhow!("Path traversal detected in parent: {:?}", parent));
+                    }
+                    full_path
+                } else {
+                    return Err(anyhow!("No parent directory for path: {:?}", full_path));
+                }
+            }
+            Err(e) => return Err(anyhow!("Failed to canonicalize path: {}", e)),
+        };
+
+        if !canonical_full.starts_with(&canonical_base) {
+            return Err(anyhow!("Path traversal detected: {:?}", canonical_full));
         }
-        Ok(full_path)
+
+        Ok(canonical_full)
     }
 
     async fn search_file_content(&self, args: Value) -> Result<Value> {
@@ -891,6 +915,79 @@ mod tests {
         let result = toolbox.call("git_tag", json!({})).await?;
         let content = result["content"].as_str().unwrap();
         assert!(content.contains("v1.0"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_validate_path_security() -> Result<()> {
+        let dir = tempdir()?;
+        let wt_path = dir.path().to_path_buf();
+        let toolbox = ToolBox::new(wt_path.clone(), None);
+
+        // Create a target file outside the worktree
+        let outside_dir = tempdir()?;
+        let outside_file = outside_dir.path().join("secret.txt");
+        std::fs::write(&outside_file, "my secret key")?;
+
+        // Create a target file inside the worktree
+        let inside_file = wt_path.join("safe.txt");
+        std::fs::write(&inside_file, "safe content")?;
+
+        // 1. Test valid relative path inside
+        let path = toolbox.validate_path("safe.txt", &wt_path);
+        assert!(path.is_ok());
+        assert_eq!(path.unwrap(), inside_file.canonicalize()?);
+
+        // 2. Test path traversal attempt
+        let path = toolbox.validate_path("../secret.txt", &wt_path);
+        assert!(path.is_err());
+
+        // 3. Test symlink pointing outside (should be blocked)
+        #[cfg(unix)]
+        {
+            let symlink_outside = wt_path.join("link_outside");
+            std::os::unix::fs::symlink(&outside_file, &symlink_outside)?;
+
+            let path = toolbox.validate_path("link_outside", &wt_path);
+            assert!(path.is_err(), "Symlink pointing outside should be blocked");
+        }
+
+        // 4. Test symlink pointing inside (should be allowed)
+        #[cfg(unix)]
+        {
+            let symlink_inside = wt_path.join("link_inside");
+            std::os::unix::fs::symlink(&inside_file, &symlink_inside)?;
+
+            let path = toolbox.validate_path("link_inside", &wt_path);
+            assert!(path.is_ok(), "Symlink pointing inside should be allowed");
+            assert_eq!(path.unwrap(), inside_file.canonicalize()?);
+        }
+
+        // 5. Test non-existent file inside (should be allowed for creation)
+        let path = toolbox.validate_path("new_file.txt", &wt_path);
+        assert!(path.is_ok());
+        assert_eq!(path.unwrap(), wt_path.join("new_file.txt"));
+
+        // 6. Test non-existent file inside nested directory (should be allowed if parent is safe)
+        let nested_dir = wt_path.join("nested");
+        std::fs::create_dir(&nested_dir)?;
+        let path = toolbox.validate_path("nested/new_file.txt", &wt_path);
+        assert!(path.is_ok());
+        assert_eq!(path.unwrap(), nested_dir.join("new_file.txt"));
+
+        // 7. Test non-existent file in symlinked outside directory (should be blocked)
+        #[cfg(unix)]
+        {
+            let symlink_dir_outside = wt_path.join("link_dir_outside");
+            std::os::unix::fs::symlink(outside_dir.path(), &symlink_dir_outside)?;
+
+            let path = toolbox.validate_path("link_dir_outside/new_file.txt", &wt_path);
+            assert!(
+                path.is_err(),
+                "Creating file in symlinked outside directory should be blocked"
+            );
+        }
 
         Ok(())
     }
