@@ -323,7 +323,10 @@ impl FetchAgent {
 
     async fn fetch_commits(&self, remote: &str, commits: &[String]) -> Result<()> {
         let mut cmd = Command::new("git");
-        cmd.current_dir(&self.repo_path).arg("fetch").arg(remote);
+        cmd.current_dir(&self.repo_path)
+            .args(crate::git_ops::GIT_PROTOCOL_RESTRICTIONS)
+            .arg("fetch")
+            .arg(remote);
 
         for commit in commits {
             cmd.arg(commit);
@@ -342,6 +345,7 @@ impl FetchAgent {
     async fn fetch_all(&self, remote: &str) -> Result<()> {
         let output = Command::new("git")
             .current_dir(&self.repo_path)
+            .args(crate::git_ops::GIT_PROTOCOL_RESTRICTIONS)
             .args(["fetch", remote])
             .output()
             .await?;

@@ -23,6 +23,21 @@ use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
 
+pub const GIT_PROTOCOL_RESTRICTIONS: &[&str] = &[
+    "-c",
+    "protocol.allow=never",
+    "-c",
+    "protocol.http.allow=always",
+    "-c",
+    "protocol.https.allow=always",
+    "-c",
+    "protocol.git.allow=always",
+    "-c",
+    "protocol.ssh.allow=always",
+    "-c",
+    "protocol.file.allow=always",
+];
+
 #[allow(dead_code)]
 pub struct GitWorktree {
     pub dir: TempDir,
@@ -519,6 +534,7 @@ pub async fn ensure_remote(
         info!("Fetching remote {}", name);
         let mut fetch = Command::new("git")
             .current_dir(repo_path)
+            .args(GIT_PROTOCOL_RESTRICTIONS)
             .args(["fetch", "--prune", "--no-tags", name])
             .output()
             .await?;
@@ -546,6 +562,7 @@ pub async fn ensure_remote(
                     // Retry the fetch once
                     fetch = Command::new("git")
                         .current_dir(repo_path)
+                        .args(GIT_PROTOCOL_RESTRICTIONS)
                         .args(["fetch", "--prune", "--no-tags", name])
                         .output()
                         .await?;
@@ -576,6 +593,7 @@ pub async fn ensure_remote(
 
         let set_head = Command::new("git")
             .current_dir(repo_path)
+            .args(GIT_PROTOCOL_RESTRICTIONS)
             .args(["remote", "set-head", name, "--auto"])
             .output()
             .await?;
@@ -1353,6 +1371,47 @@ mod tests {
         assert!(
             !bad_tag_path.exists(),
             "Bad tag should have been deleted by recovery logic"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_ensure_remote_protocol_security() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let repo_path = dir.path().to_path_buf();
+
+        // Init local repo
+        Command::new("git")
+            .current_dir(&repo_path)
+            .args(["init"])
+            .output()
+            .await?;
+
+        let proof_file = dir.path().join("vandalized_protocol.txt");
+        let script_path = dir.path().join("trigger.sh");
+        std::fs::write(
+            &script_path,
+            format!("#!/bin/sh\ntouch \"{}\"", proof_file.display()),
+        )?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let url = format!("ext::{}", script_path.to_str().unwrap());
+
+        // ensure_remote might return Ok(()) even if fetch fails because it ignores fetch failures.
+        // However, the key security guarantee is that the command in the ext:: URL is NOT executed.
+        let _ = ensure_remote(&repo_path, "malicious", &url, true).await;
+
+        assert!(
+            !proof_file.exists(),
+            "Command should NOT have been executed!"
         );
 
         Ok(())
