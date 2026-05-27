@@ -168,3 +168,8 @@ cc = ["dsterba@suse.cz"]
 lists = ["linux-cxl@vger.kernel.org"]
 reply_to_author = true
 cc = ["linux-cxl@vger.kernel.org"]
+
+[subsystems.ntb]
+lists = ["ntb@lists.linux.dev"]
+reply_to_author = true
+cc = ["ntb@lists.linux.dev"]
